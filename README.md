@@ -78,9 +78,6 @@ pip install -r requirements.txt
 
 ### 2. Chuẩn bị dataset
 
-CSV của bạn cần có cột:  
-`image_path | question | answer | question_type`
-
 Nếu `image_path` dùng đường dẫn tuyệt đối cũ (trên máy khác), dùng `--img_base`:
 ```bash
 # img_base = thư mục chứa ảnh mới
@@ -129,7 +126,7 @@ python demo.py \
 
 ## 🧠 Giải thích kiến trúc
 
-### Image Encoder – EfficientNet-B4
+### Image Encoder – EfficientNet-B4 or ResNet 101 (can changes later)
 - Pretrained trên ImageNet
 - Lấy spatial features: **(B, 49, 512)** grid 7×7
 - Data augmentation: flip, rotate, crop, color jitter
@@ -171,13 +168,3 @@ python demo.py \
 | ROUGE-L | Longest common subsequence |
 | METEOR | Unigram matching với penalty |
 | BERTScore-F | Semantic similarity (PhoBERT) |
-
----
-
-## 💡 Lời khuyên tối ưu
-
-1. **Vocab**: dùng `underthesea` để tokenize chính xác hơn  
-2. **Augmentation**: paraphrase câu hỏi bằng GPT/Gemini để tăng tập train  
-3. **A2 vs A1**: A2 thường tốt hơn ở câu dài, A1 tốt hơn ở câu ngắn yes/no  
-4. **B2**: fine-tune ít nhất 5 epochs, LR ≤ 5e-5  
-5. **Ensemble**: kết hợp A2 + B2 cho kết quả tốt nhất  
