@@ -1,44 +1,26 @@
 """
 Hướng B – Multimodal Pretrained: BLIP / BLIP-2
   B1: Zero-shot (không fine-tune)
-  B2: Fine-tuned (LoRA nếu cần)
+  B2: Fine-tuned (LoRA)
 
 Chiến lược tiếng Việt:
-  - Dùng trực tiếp: model hiểu tiếng Việt cơ bản (BLIP-2 với LLM backbone lớn)
-  - Hoặc dịch: vi→en trước khi vào model (dùng M2M-100 nhẹ)
+  - translate=True  : dùng Helsinki-NLP/opus-mt-vi-en (nhẹ, ổn định)
+  - translate=False : feed tiếng Việt trực tiếp (hoạt động khi dùng BLIP-2 lớn)
+
+FIX 1: preprocess_batch() bỏ text_pair (BlipProcessor không hỗ trợ),
+        encode answer riêng rồi gán vào labels.
+FIX 2: Xóa _load_blip2() không dùng, thay bằng note rõ ràng nếu cần upgrade.
 """
 
-import os, torch
+import os
+import torch
 import torch.nn as nn
-from typing import List
+from typing import List, Optional
 import config
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Lazy import – tránh lỗi nếu chưa cài thư viện
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _load_blip_base():
-    """Tải BLIP-base (nhẹ ~400MB), phù hợp cho cả B1 & B2."""
-    from transformers import BlipProcessor, BlipForQuestionAnswering
-    processor = BlipProcessor.from_pretrained("Salesforce/blip-vqa-base")
-    model     = BlipForQuestionAnswering.from_pretrained("Salesforce/blip-vqa-base")
-    return processor, model
-
-
-def _load_blip2():
-    """Tải BLIP-2 (nặng hơn, cần GPU ≥16GB hoặc 8bit)."""
-    from transformers import Blip2Processor, Blip2ForConditionalGeneration
-    processor = Blip2Processor.from_pretrained(config.BLIP_LITE)
-    model     = Blip2ForConditionalGeneration.from_pretrained(
-        config.BLIP_LITE,
-        load_in_8bit=True,
-        device_map="auto",
-    )
-    return processor, model
-
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Optional: dịch câu hỏi vi→en
+# Translator (vi → en)  — dùng chung cho B1 và B2
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ViEnTranslator:
@@ -53,13 +35,31 @@ class ViEnTranslator:
 
     @torch.no_grad()
     def translate(self, texts: List[str]) -> List[str]:
-        inputs = self.tok(texts, return_tensors="pt", padding=True, truncation=True, max_length=128)
-        out    = self.model.generate(**inputs, num_beams=4, max_new_tokens=128)
+        inputs = self.tok(
+            texts, return_tensors="pt", padding=True,
+            truncation=True, max_length=128,
+        )
+        out = self.model.generate(**inputs, num_beams=4, max_new_tokens=128)
         return self.tok.batch_decode(out, skip_special_tokens=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# B1 – Zero-shot wrapper
+# Loader helper  (chỉ BLIP-base để phù hợp cả B1 & B2)
+# ─────────────────────────────────────────────────────────────────────────────
+# NOTE: Nếu muốn dùng BLIP-2 thật (nặng hơn, cần GPU ≥16GB), thay
+#       "Salesforce/blip-vqa-base" bằng config.BLIP_LITE và dùng
+#       Blip2Processor + Blip2ForConditionalGeneration với load_in_8bit=True.
+
+def _load_blip_base():
+    """Tải BLIP-VQA-base (~400MB). Phù hợp cả B1 và B2."""
+    from transformers import BlipProcessor, BlipForQuestionAnswering
+    processor = BlipProcessor.from_pretrained("Salesforce/blip-vqa-base")
+    model     = BlipForQuestionAnswering.from_pretrained("Salesforce/blip-vqa-base")
+    return processor, model
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B1 – Zero-shot
 # ─────────────────────────────────────────────────────────────────────────────
 
 class BLIPZeroShot:
@@ -80,8 +80,11 @@ class BLIPZeroShot:
         if self.translate and self.translator:
             questions = self.translator.translate(questions)
 
-        inputs = self.processor(images=images, text=questions,
-                                return_tensors="pt", padding=True).to(config.DEVICE)
+        inputs = self.processor(
+            images=images, text=questions,
+            return_tensors="pt", padding=True,
+        ).to(config.DEVICE)
+
         with torch.no_grad():
             out = self.model.generate(**inputs, max_new_tokens=30)
         return self.processor.batch_decode(out, skip_special_tokens=True)
@@ -108,14 +111,13 @@ class BLIPFineTuned(nn.Module):
 
     def _apply_lora(self):
         try:
-            from peft import get_peft_model, LoraConfig, TaskType
+            from peft import get_peft_model, LoraConfig
             lora_cfg = LoraConfig(
-                r=config.LORA_R,
-                lora_alpha=config.LORA_ALPHA,
-                lora_dropout=config.LORA_DROPOUT,
-                bias="none",
-                # target all linear layers in language model
-                target_modules=["query", "key", "value", "dense"],
+                r            = config.LORA_R,
+                lora_alpha   = config.LORA_ALPHA,
+                lora_dropout = config.LORA_DROPOUT,
+                bias         = "none",
+                target_modules = ["query", "key", "value", "dense"],
             )
             self.blip = get_peft_model(self.blip, lora_cfg)
             self.blip.print_trainable_parameters()
@@ -123,45 +125,64 @@ class BLIPFineTuned(nn.Module):
             print("[BLIP B2] peft not installed – fine-tuning all params")
 
     def forward(self, pixel_values, input_ids, attention_mask, labels=None):
-        """Direct call to BLIP internal forward."""
         return self.blip(
-            pixel_values=pixel_values,
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            labels=labels,
+            pixel_values   = pixel_values,
+            input_ids      = input_ids,
+            attention_mask = attention_mask,
+            labels         = labels,
         )
 
-    def preprocess_batch(self, images, questions: List[str], answers: List[str] = None):
-        """Tiền xử lý batch cho training / inference."""
+    def preprocess_batch(
+        self,
+        images,
+        questions: List[str],
+        answers: Optional[List[str]] = None,
+    ) -> dict:
+        """
+        Tiền xử lý batch cho training / inference.
+
+        FIX: BlipProcessor không hỗ trợ text_pair.
+             Encode questions và answers riêng biệt,
+             sau đó gán answers token ids vào key 'labels'.
+        """
         if self.translate and self.translator:
             questions = self.translator.translate(questions)
             if answers:
                 answers = self.translator.translate(answers)
 
-        if answers:
-            encoding = self.processor(
-                images=images, text=questions,
-                text_pair=answers,
-                return_tensors="pt", padding=True, truncation=True,
-            )
-            # labels = token ids of answers
+        # Encode ảnh + câu hỏi
+        encoding = self.processor(
+            images=images,
+            text=questions,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+        )
+
+        if answers is not None:
+            # FIX: Encode answers riêng bằng tokenizer, gán làm labels
             ans_enc = self.processor.tokenizer(
-                answers, return_tensors="pt", padding=True, truncation=True, max_length=config.MAX_A_LEN
+                answers,
+                return_tensors = "pt",
+                padding        = True,
+                truncation     = True,
+                max_length     = config.MAX_A_LEN,
             )
-            encoding["labels"] = ans_enc["input_ids"]
-        else:
-            encoding = self.processor(
-                images=images, text=questions,
-                return_tensors="pt", padding=True, truncation=True,
-            )
+            # Thay padding token id (-100) để CrossEntropyLoss bỏ qua
+            labels = ans_enc["input_ids"].clone()
+            labels[labels == self.processor.tokenizer.pad_token_id] = -100
+            encoding["labels"] = labels
+
         return {k: v.to(config.DEVICE) for k, v in encoding.items()}
 
     @torch.no_grad()
     def generate(self, images, questions: List[str]) -> List[str]:
         if self.translate and self.translator:
             questions = self.translator.translate(questions)
-        inputs = self.processor(images=images, text=questions,
-                                return_tensors="pt", padding=True).to(config.DEVICE)
+        inputs = self.processor(
+            images=images, text=questions,
+            return_tensors="pt", padding=True,
+        ).to(config.DEVICE)
         out = self.blip.generate(**inputs, max_new_tokens=30)
         return self.processor.batch_decode(out, skip_special_tokens=True)
 
@@ -171,9 +192,9 @@ class BLIPFineTuned(nn.Module):
         self.processor.save_pretrained(path)
 
     @classmethod
-    def load_pretrained(cls, path: str, use_lora: bool = False) -> "BLIPFineTuned":
+    def load_pretrained(cls, path: str) -> "BLIPFineTuned":
         from transformers import BlipProcessor, BlipForQuestionAnswering
-        obj = cls.__new__(cls)
+        obj            = cls.__new__(cls)
         super(BLIPFineTuned, obj).__init__()
         obj.processor  = BlipProcessor.from_pretrained(path)
         obj.blip       = BlipForQuestionAnswering.from_pretrained(path)

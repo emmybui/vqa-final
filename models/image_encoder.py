@@ -1,6 +1,9 @@
 """
-Image Encoder – CNN pretrained (EfficientNet-B4 / ResNet-50 / ViT-B/16)
+Image Encoder – CNN pretrained (EfficientNet-B4 / ResNet50 / ViT-B/16)
 Output: (B, num_regions, feat_dim)  ← grid features cho co-attention
+
+FIX 1: ViT dùng public API thay vì _process_input() (private, có thể break)
+FIX 2: GRID_SIZE lấy từ config thay vì hardcode (7, 7)
 """
 
 import torch
@@ -26,7 +29,6 @@ class ImageEncoder(nn.Module):
         self.backbone_name = backbone
         feat_dim = self._build_backbone(backbone)
 
-        # projection → FUSION_DIM
         self.proj = nn.Sequential(
             nn.Linear(feat_dim, out_dim),
             nn.LayerNorm(out_dim),
@@ -42,26 +44,25 @@ class ImageEncoder(nn.Module):
     # ── builders ────────────────────────────────────────────────────────────
 
     def _build_backbone(self, name: str) -> int:
-        """Xây backbone, trả về feat_dim của spatial feature."""
+        grid = config.GRID_SIZE  # FIX: không hardcode (7,7)
+
         if name == "efficientnet_b4":
             base = models.efficientnet_b4(weights=models.EfficientNet_B4_Weights.DEFAULT)
-            # lấy features trước avgpool
-            self.backbone = base.features          # (B, 1792, 7, 7) với 224x224
-            self.pool     = nn.AdaptiveAvgPool2d((7, 7))
+            self.backbone = base.features
+            self.pool = nn.AdaptiveAvgPool2d((grid, grid))
             return 1792
 
         elif name == "resnet50":
             base = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
-            self.backbone = nn.Sequential(*list(base.children())[:-2])  # remove avgpool + fc
-            self.pool     = nn.AdaptiveAvgPool2d((7, 7))
+            self.backbone = nn.Sequential(*list(base.children())[:-2])
+            self.pool = nn.AdaptiveAvgPool2d((grid, grid))
             return 2048
 
         elif name == "vit_b_16":
-            # ViT: dùng patch tokens  (B, 196, 768)
             base = models.vit_b_16(weights=models.ViT_B_16_Weights.DEFAULT)
             self.backbone = base
             self._vit_mode = True
-            self.pool      = None
+            self.pool = None
             return 768
 
         else:
@@ -81,24 +82,36 @@ class ImageEncoder(nn.Module):
         return self._forward_cnn(x)
 
     def _forward_cnn(self, x):
-        feat = self.backbone(x)               # (B, C, h, w)
-        feat = self.pool(feat)                 # (B, C, 7, 7)
+        feat = self.backbone(x)
+        feat = self.pool(feat)
         B, C, H, W = feat.shape
-        feat = feat.view(B, C, H * W).permute(0, 2, 1)  # (B, 49, C)
-        feat = self.proj(feat)                # (B, 49, out_dim)
-        pooled = feat.mean(dim=1)             # (B, out_dim)
+        feat = feat.view(B, C, H * W).permute(0, 2, 1)  # (B, H*W, C)
+        feat = self.proj(feat)                            # (B, H*W, out_dim)
+        pooled = feat.mean(dim=1)                         # (B, out_dim)
         return feat, pooled
 
     def _forward_vit(self, x):
-        # ViT internal: get patch embeddings
-        enc = self.backbone._process_input(x)                  # (B, 196, 768)
-        batch_class_token = self.backbone.class_token.expand(x.shape[0], -1, -1)
-        enc = torch.cat([batch_class_token, enc], dim=1)        # (B, 197, 768)
-        enc = self.backbone.encoder(enc)                        # (B, 197, 768)
-        cls_tok = enc[:, 0]                                     # (B, 768)
-        patch_tok = enc[:, 1:]                                  # (B, 196, 768)
-        feat   = self.proj(patch_tok)                           # (B, 196, out_dim)
-        pooled = self.proj(cls_tok)                             # (B, out_dim)
+        """
+        FIX: Dùng public attributes của ViT thay vì _process_input().
+        conv_proj, class_token, encoder đều là public và stable.
+        """
+        b = self.backbone
+
+        # patch projection: (B, hidden_dim, grid_h, grid_w) → (B, num_patches, hidden_dim)
+        patches = b.conv_proj(x).flatten(2).transpose(1, 2)
+
+        # prepend class token
+        cls = b.class_token.expand(x.shape[0], -1, -1)
+        tokens = torch.cat([cls, patches], dim=1)  # (B, 1+num_patches, 768)
+
+        # transformer encoder
+        tokens = b.encoder(tokens)                 # (B, 1+num_patches, 768)
+
+        cls_tok   = tokens[:, 0]                   # (B, 768)
+        patch_tok = tokens[:, 1:]                  # (B, num_patches, 768)
+
+        feat   = self.proj(patch_tok)              # (B, num_patches, out_dim)
+        pooled = self.proj(cls_tok)                # (B, out_dim)
         return feat, pooled
 
 
