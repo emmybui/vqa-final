@@ -1,14 +1,3 @@
-"""
-Hướng A:
-  VQA_A1 – CNN + BiLSTM + Co-Attention + LSTM Decoder
-  VQA_A2 – CNN + BiLSTM + Co-Attention + Transformer Decoder
-
-FIX 1: generate() guard beam_size — LSTMDecoder không nhận beam_size kwarg.
-FIX 2: TransformerDecoder nhận full memory sequence (img_feat + txt_feat)
-        thay vì 1 context vector, giữ đủ spatial information.
-FIX 3: Thêm proj_to_embed để align FUSION_DIM → embed_dim trước khi cat memory.
-"""
-
 import torch
 import torch.nn as nn
 
@@ -20,11 +9,6 @@ from models.decoder       import LSTMDecoder, TransformerAnswerDecoder
 
 
 class VQAModel(nn.Module):
-    """
-    Base class cho cả A1 và A2.
-    decoder_type: "lstm" | "transformer"
-    """
-
     def __init__(
         self,
         q_vocab_size: int,
@@ -65,10 +49,7 @@ class VQAModel(nn.Module):
             self._mem_proj = None
 
         else:  # "transformer"
-            embed_dim = config.FUSION_DIM  # TransformerDecoder embed_dim
-
-            # FIX: Project img_feat và txt_feat về embed_dim nếu cần
-            # (hiện FUSION_DIM == embed_dim nên proj là identity-like)
+            embed_dim = config.FUSION_DIM  
             self._mem_proj = nn.Linear(config.FUSION_DIM, embed_dim) \
                              if config.FUSION_DIM != embed_dim else nn.Identity()
 
@@ -78,16 +59,8 @@ class VQAModel(nn.Module):
                 pad_idx    = pad_idx,
             )
 
-    # ── Forward (training) ────────────────────────────────────────────────
 
     def forward(self, image, q_ids, q_len, a_in):
-        """
-        image : (B, 3, H, W)
-        q_ids : (B, T_q)
-        q_len : (B, 1)
-        a_in  : (B, T_a)  teacher-forcing input
-        Returns logits (B, T_a, a_vocab)
-        """
         img_feat, _ = self.img_encoder(image)               # (B, Nv, D)
         txt_feat, _ = self.txt_encoder(q_ids, q_len)        # (B, Nq, D)
         txt_pad     = (q_ids == self.pad_idx)               # (B, Nq)
@@ -98,8 +71,6 @@ class VQAModel(nn.Module):
             logits = self.decoder(fused, a_in)              # (B, T_a, V)
 
         else:
-            # FIX: dùng full sequence (Nv + Nq tokens) làm memory
-            # Transformer có thể attend vào từng patch ảnh và từng token text
             memory, mem_mask = self._build_memory(img_feat, txt_feat, txt_pad)
             logits = self.decoder(memory, a_in,
                                   memory_key_padding_mask=mem_mask)
@@ -107,11 +78,6 @@ class VQAModel(nn.Module):
         return logits
 
     def _build_memory(self, img_feat, txt_feat, txt_pad_mask):
-        """
-        Ghép img_feat (B, Nv, D) + txt_feat (B, Nq, D) thành memory sequence.
-        memory_mask: (B, Nv+Nq) — False ở vị trí img (không bao giờ pad),
-                                   True ở vị trí txt pad.
-        """
         B, Nv, _ = img_feat.shape
         img_proj = self._mem_proj(img_feat)   # (B, Nv, D)
         txt_proj = self._mem_proj(txt_feat)   # (B, Nq, D)
@@ -133,9 +99,7 @@ class VQAModel(nn.Module):
         txt_pad     = (q_ids == self.pad_idx)
         fused, _, _ = self.fusion(img_feat, txt_feat, txt_pad)
 
-        # FIX: dispatch đúng cho từng loại decoder
         if self.decoder_type == "lstm":
-            # LSTMDecoder chỉ greedy, không có beam_size
             return self.decoder.generate(fused, bos_idx, eos_idx)
         else:
             memory, mem_mask = self._build_memory(img_feat, txt_feat, txt_pad)
@@ -149,7 +113,7 @@ class VQAModel(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 
-# ── Convenient constructors ───────────────────────────────────────────────────
+# Convenient constructors
 
 def build_model_A1(q_vocab_size: int, a_vocab_size: int, **kw) -> VQAModel:
     """Hướng A1: LSTM Decoder"""
@@ -161,7 +125,7 @@ def build_model_A2(q_vocab_size: int, a_vocab_size: int, **kw) -> VQAModel:
     return VQAModel(q_vocab_size, a_vocab_size, decoder_type="transformer", **kw)
 
 
-# ── Quick test ────────────────────────────────────────────────────────────────
+#Quick test
 
 if __name__ == "__main__":
     B = 2

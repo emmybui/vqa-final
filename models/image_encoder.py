@@ -1,11 +1,3 @@
-"""
-Image Encoder – CNN pretrained (EfficientNet-B4 / ResNet50 / ViT-B/16)
-Output: (B, num_regions, feat_dim)  ← grid features cho co-attention
-
-FIX 1: ViT dùng public API thay vì _process_input() (private, có thể break)
-FIX 2: GRID_SIZE lấy từ config thay vì hardcode (7, 7)
-"""
-
 import torch
 import torch.nn as nn
 from torchvision import models
@@ -13,12 +5,6 @@ import config
 
 
 class ImageEncoder(nn.Module):
-    """
-    Trả về:
-        features : (B, num_regions, feat_dim)   — dùng cho co-attention
-        pooled   : (B, feat_dim)                — global feature
-    """
-
     def __init__(
         self,
         backbone: str = config.IMG_ENCODER,
@@ -41,7 +27,6 @@ class ImageEncoder(nn.Module):
             for p in self.backbone.parameters():
                 p.requires_grad_(False)
 
-    # ── builders ────────────────────────────────────────────────────────────
 
     def _build_backbone(self, name: str) -> int:
         grid = config.GRID_SIZE  # FIX: không hardcode (7,7)
@@ -68,15 +53,9 @@ class ImageEncoder(nn.Module):
         else:
             raise ValueError(f"Unknown backbone: {name}")
 
-    # ── forward ─────────────────────────────────────────────────────────────
 
     def forward(self, x: torch.Tensor):
-        """
-        x : (B, 3, H, W)
-        returns:
-            features : (B, num_regions, out_dim)
-            pooled   : (B, out_dim)
-        """
+
         if self.backbone_name == "vit_b_16":
             return self._forward_vit(x)
         return self._forward_cnn(x)
@@ -91,10 +70,6 @@ class ImageEncoder(nn.Module):
         return feat, pooled
 
     def _forward_vit(self, x):
-        """
-        FIX: Dùng public attributes của ViT thay vì _process_input().
-        conv_proj, class_token, encoder đều là public và stable.
-        """
         b = self.backbone
 
         # patch projection: (B, hidden_dim, grid_h, grid_w) → (B, num_patches, hidden_dim)

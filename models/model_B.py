@@ -1,17 +1,3 @@
-"""
-Hướng B – Multimodal Pretrained: BLIP / BLIP-2
-  B1: Zero-shot (không fine-tune)
-  B2: Fine-tuned (LoRA)
-
-Chiến lược tiếng Việt:
-  - translate=True  : dùng Helsinki-NLP/opus-mt-vi-en (nhẹ, ổn định)
-  - translate=False : feed tiếng Việt trực tiếp (hoạt động khi dùng BLIP-2 lớn)
-
-FIX 1: preprocess_batch() bỏ text_pair (BlipProcessor không hỗ trợ),
-        encode answer riêng rồi gán vào labels.
-FIX 2: Xóa _load_blip2() không dùng, thay bằng note rõ ràng nếu cần upgrade.
-"""
-
 import os
 import torch
 import torch.nn as nn
@@ -19,12 +5,8 @@ from typing import List, Optional
 import config
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Translator (vi → en)  — dùng chung cho B1 và B2
-# ─────────────────────────────────────────────────────────────────────────────
-
 class ViEnTranslator:
-    """Dịch nhanh vi→en bằng Helsinki-NLP/opus-mt-vi-en."""
+    """Dịch nhanh bằng Helsinki-NLP/opus-mt-vi-en."""
 
     def __init__(self):
         from transformers import MarianMTModel, MarianTokenizer
@@ -43,13 +25,6 @@ class ViEnTranslator:
         return self.tok.batch_decode(out, skip_special_tokens=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Loader helper  (chỉ BLIP-base để phù hợp cả B1 & B2)
-# ─────────────────────────────────────────────────────────────────────────────
-# NOTE: Nếu muốn dùng BLIP-2 thật (nặng hơn, cần GPU ≥16GB), thay
-#       "Salesforce/blip-vqa-base" bằng config.BLIP_LITE và dùng
-#       Blip2Processor + Blip2ForConditionalGeneration với load_in_8bit=True.
-
 def _load_blip_base():
     """Tải BLIP-VQA-base (~400MB). Phù hợp cả B1 và B2."""
     from transformers import BlipProcessor, BlipForQuestionAnswering
@@ -57,10 +32,6 @@ def _load_blip_base():
     model     = BlipForQuestionAnswering.from_pretrained("Salesforce/blip-vqa-base")
     return processor, model
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# B1 – Zero-shot
-# ─────────────────────────────────────────────────────────────────────────────
 
 class BLIPZeroShot:
     """B1: zero-shot inference, không fine-tune."""
@@ -73,10 +44,6 @@ class BLIPZeroShot:
         self.translate  = translate
 
     def answer(self, images, questions: List[str]) -> List[str]:
-        """
-        images    : list of PIL.Image
-        questions : list of str (tiếng Việt)
-        """
         if self.translate and self.translator:
             questions = self.translator.translate(questions)
 
@@ -89,10 +56,6 @@ class BLIPZeroShot:
             out = self.model.generate(**inputs, max_new_tokens=30)
         return self.processor.batch_decode(out, skip_special_tokens=True)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# B2 – Fine-tuned BLIP + LoRA
-# ─────────────────────────────────────────────────────────────────────────────
 
 class BLIPFineTuned(nn.Module):
     """B2: Fine-tune BLIP-VQA-base với LoRA (PEFT)."""
@@ -138,13 +101,6 @@ class BLIPFineTuned(nn.Module):
         questions: List[str],
         answers: Optional[List[str]] = None,
     ) -> dict:
-        """
-        Tiền xử lý batch cho training / inference.
-
-        FIX: BlipProcessor không hỗ trợ text_pair.
-             Encode questions và answers riêng biệt,
-             sau đó gán answers token ids vào key 'labels'.
-        """
         if self.translate and self.translator:
             questions = self.translator.translate(questions)
             if answers:
@@ -168,7 +124,6 @@ class BLIPFineTuned(nn.Module):
                 truncation     = True,
                 max_length     = config.MAX_A_LEN,
             )
-            # Thay padding token id (-100) để CrossEntropyLoss bỏ qua
             labels = ans_enc["input_ids"].clone()
             labels[labels == self.processor.tokenizer.pad_token_id] = -100
             encoding["labels"] = labels
