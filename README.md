@@ -9,29 +9,29 @@ Domain: **Món ăn Việt Nam** | 4 cấu hình bắt buộc: A1, A2, B1, B2
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     VQA Vietnamese Food                      │
+│                     VQA Vietnamese Food                     │
 │                                                             │
-│  Input: [Image] + [Câu hỏi tiếng Việt]                     │
+│  Input: [Image] + [Câu hỏi tiếng Việt]                      │
 │                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
+│  ┌───────────────────────────────────────────────────────┐  │
 │  │              HƯỚNG A – Kiến trúc rời                  │  │
 │  │                                                       │  │
-│  │  [Image] → EfficientNet-B4 → Region Features (49×D)  │  │
-│  │                          ↘                           │  │
+│  │  [Image] → EfficientNet-B4 → Region Features (49×D)   │  │
+│  │                          ↘                            │  │
 │  │                     Co-Attention  → Fused (D×2)       │  │
-│  │                          ↗                           │  │
-│  │  [Text]  → Embedding → BiLSTM   → Token Features     │  │
+│  │                          ↗                            │  │
+│  │  [Text]  → Embedding → BiLSTM   → Token Features      │  │
 │  │                                                       │  │
-│  │  A1: Fused → LSTM Decoder → Answer                   │  │
-│  │  A2: Fused → Transformer Decoder → Answer            │  │
-│  └──────────────────────────────────────────────────────┘  │
+│  │  A1: Fused → LSTM Decoder → Answer                    │  │
+│  │  A2: Fused → Transformer Decoder → Answer             │  │
+│  └───────────────────────────────────────────────────────┘  │
 │                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
+│  ┌───────────────────────────────────────────────────────┐  │
 │  │              HƯỚNG B – Multimodal Pretrained          │  │
 │  │                                                       │  │
-│  │  B1: BLIP-VQA-base (zero-shot) + vi→en translation   │  │
-│  │  B2: BLIP-VQA-base fine-tuned + LoRA                 │  │
-│  └──────────────────────────────────────────────────────┘  │
+│  │  B1: BLIP-VQA-base (zero-shot) + vi→en translation    │  │
+│  │  B2: BLIP-VQA-base fine-tuned + LoRA                  │  │
+│  └───────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -161,10 +161,10 @@ python demo.py \
 
 ## 📊 Metrics đánh giá
 
-| Metric | Mô tả |
-|--------|-------|
+|     Metric      |           Mô tả               |
+|-----------------|-------------------------------|
 | VQA Exact Match | Chuẩn hoá → so khớp chính xác |
-| BLEU-1/2/3/4 | N-gram precision |
-| ROUGE-L | Longest common subsequence |
-| METEOR | Unigram matching với penalty |
-| BERTScore-F | Semantic similarity (PhoBERT) |
+| BLEU-1/2/3/4    | N-gram precision              |
+| ROUGE-L         | Longest common subsequence    |
+| METEOR          | Unigram matching với penalty  |
+| BERTScore-F     | Semantic similarity (PhoBERT) |
