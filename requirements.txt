@@ -1,0 +1,36 @@
+# Core
+torch>=2.1.0
+torchvision>=0.16.0
+torchaudio>=2.1.0
+
+# Data
+pandas>=2.0.0
+Pillow>=10.0.0
+numpy>=1.24.0
+
+# NLP & Tokenizer
+transformers>=4.40.0
+sentencepiece>=0.1.99
+tokenizers>=0.15.0
+
+# Vietnamese NLP (optional but recommended)
+underthesea>=6.8.0
+
+# LoRA / PEFT (for Direction B)
+peft>=0.10.0
+accelerate>=0.28.0
+bitsandbytes>=0.43.0   # for 8-bit quantization
+
+# Evaluation
+bert-score>=0.3.13
+
+# Demo
+gradio>=4.20.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Utilities
+tqdm>=4.65.0
+scikit-learn>=1.3.0
