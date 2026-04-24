@@ -18,12 +18,12 @@ Domain: **Món ăn Việt Nam** | 4 cấu hình bắt buộc: A1, A2, B1, B2
 │  │                                                       │  │
 │  │  [Image] → EfficientNet-B4 → Region Features (49×D)   │  │
 │  │                          ↘                            │  │
-│  │                     Co-Attention  → Fused (D×2)       │  │
+│  │                     Co-Attention                      │  │
 │  │                          ↗                            │  │
-│  │  [Text]  → Embedding → BiLSTM   → Token Features      │  │
+│  │  [Text]  → Embedding → BiLSTM   → Memory Sequence     │  │
 │  │                                                       │  │
-│  │  A1: Fused → LSTM Decoder → Answer                    │  │
-│  │  A2: Fused → Transformer Decoder → Answer             │  │
+│  │  A1: LSTM Decoder → Answer                            │  │
+│  │  A2: Transformer Decoder → Answer                     │  │
 │  └───────────────────────────────────────────────────────┘  │
 │                                                             │
 │  ┌───────────────────────────────────────────────────────┐  │
